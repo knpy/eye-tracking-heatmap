@@ -14,6 +14,11 @@ const EyeTrackingHeatmapTool = () => {
   const canvasRef = useRef(null);
   const heatInstanceRef = useRef(null);
   const fileInputRef = useRef(null);
+  const videoRef = useRef(null);
+  const [stream, setStream] = useState(null);
+
+  const IMAGE_WIDTH = 400;
+  const IMAGE_HEIGHT = 400;
 
   useEffect(() => {
     if (canvasRef.current && !heatInstanceRef.current) {
@@ -24,13 +29,14 @@ const EyeTrackingHeatmapTool = () => {
 
   useEffect(() => {
     if (isTracking) {
-      const interval = setInterval(() => {
-        // この部分は実際のアイトラッキングロジックに置き換える必要があります
-        const newPosition = {
-          x: Math.random() * 800,
-          y: Math.random() * 400,
-        };
-        setEyePositions(prevPositions => [...prevPositions, newPosition]);
+      const interval = setInterval(async () => {
+        if (videoRef.current) {
+          const imageData = await captureImage();
+          const result = await processEyeTracking(imageData);
+          if (result) {
+            setEyePositions(prevPositions => [...prevPositions, result]);
+          }
+        }
       }, 100);
 
       return () => clearInterval(interval);
@@ -54,7 +60,49 @@ const EyeTrackingHeatmapTool = () => {
     }
   };
 
-  const toggleTracking = () => {
+  const captureImage = () => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+      canvas.toBlob(resolve, 'image/jpeg');
+    });
+  };
+
+  const processEyeTracking = async (imageData) => {
+    try {
+      const formData = new FormData();
+      formData.append('image', imageData);
+
+      const response = await fetch('http://localhost:5000/api/eye-tracking', {
+        method: 'POST',
+        body: formData,
+      });
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error processing eye tracking:', error);
+    }
+  };
+
+  const toggleTracking = async () => {
+    if (!isTracking) {
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setStream(mediaStream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
+      } catch (err) {
+        console.error("Error accessing the camera:", err);
+      }
+    } else {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        setStream(null);
+      }
+    }
     setIsTracking(!isTracking);
     if (!isTracking) {
       setEyePositions([]);
@@ -86,7 +134,7 @@ const EyeTrackingHeatmapTool = () => {
   };
 
   return (
-    <div className="p-4 max-w-3xl mx-auto">
+    <div className="p-4 max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">Eye Tracking Heatmap Tool</h1>
       
       <div className="mb-4 flex items-center space-x-4">
@@ -124,30 +172,41 @@ const EyeTrackingHeatmapTool = () => {
         </Button>
       </div>
 
-      <div className="relative w-full h-[400px] border border-gray-300">
-        {selectedImage && (
-          <img
-            src={selectedImage}
-            alt="Selected image"
+      <div className="flex">
+        <div className="relative w-1/2 h-[400px] border border-gray-300">
+          {selectedImage && (
+            <img
+              src={selectedImage}
+              alt="Selected image"
+              className="w-full h-full object-cover"
+            />
+          )}
+          <canvas
+            ref={canvasRef}
+            width={IMAGE_WIDTH}
+            height={IMAGE_HEIGHT}
+            className="absolute top-0 left-0 w-full h-full"
+          />
+          {isTracking && selectedImage && eyePositions.length > 0 && (
+            <div
+              className="absolute w-4 h-4 bg-red-500 rounded-full"
+              style={{
+                left: `${(eyePositions[eyePositions.length - 1].x / IMAGE_WIDTH) * 100}%`,
+                top: `${(eyePositions[eyePositions.length - 1].y / IMAGE_HEIGHT) * 100}%`,
+                transform: 'translate(-50%, -50%)',
+              }}
+            />
+          )}
+        </div>
+        <div className="w-1/2 h-[400px] border border-gray-300 ml-4">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
             className="w-full h-full object-cover"
           />
-        )}
-        <canvas
-          ref={canvasRef}
-          width={800}
-          height={400}
-          className="absolute top-0 left-0 w-full h-full"
-        />
-        {isTracking && selectedImage && (
-          <div
-            className="absolute w-4 h-4 bg-red-500 rounded-full"
-            style={{
-              left: `${(eyePositions[eyePositions.length - 1]?.x / 800) * 100}%`,
-              top: `${(eyePositions[eyePositions.length - 1]?.y / 400) * 100}%`,
-              transform: 'translate(-50%, -50%)',
-            }}
-          />
-        )}
+        </div>
       </div>
 
       <div className="mt-4">
